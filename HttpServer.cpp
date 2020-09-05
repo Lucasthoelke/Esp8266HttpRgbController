@@ -4,6 +4,10 @@
 //This is here and not in a function because otherwise it will throw linker errors. Fix this later.
 ESP8266WebServer HttpServer::server(STAPRT);
 
+//Payload buffer for advanced frames. Max 255 payloads
+Payload HttpServer::payloadBuffer[255];
+unsigned short HttpServer::payloadBufferPos;
+
 /*
 * This is run on every loop() arduino function
 */
@@ -55,6 +59,8 @@ void HttpServer::setupWebServer()
 
   server.on("/command", HttpServer::handleCommand);
 
+  server.on("/setRGB", HttpServer::handleSetRGB);
+
   server.begin();
 }
 
@@ -62,8 +68,8 @@ Payload HttpServer::generatePayload()
 {
   Payload payload = Payload();
 
-  if (server.hasArg("authkey"))
-    payload.authkey = server.arg("authkey");
+  //if (server.hasArg("authkey"))
+    //payload.authkey = server.arg("authkey");
 
   if (server.hasArg("function"))
     payload.function = server.arg("function");
@@ -119,13 +125,149 @@ void HttpServer::handleRoot()
   server.send(200, "text/plain", message);
 }
 
+void HttpServer::handleJsonPayload()
+{
+
+  if (!HttpServer::isAuthenticated()) {
+    server.send(401, "text/plain", "Not authenticated.");
+    return;
+  }
+
+  String outputHtml = "";
+
+  String inputJson;
+
+  const int jsonCapacity = JSON_OBJECT_SIZE(10);
+  DynamicJsonDocument jsonDocument(jsonCapacity); //TODO: Calculate capacity
+
+  /* Try to parse json */
+  DeserializationError jsonError = deserializeJson(jsonDocument, inputJson);
+
+  if (jsonError) {
+    Serial.print(F("deserializeJson() failed with code "));
+    Serial.println(jsonError.c_str());
+    server.send(500, "text/plain", "Json error. See Serial for details.");
+  }
+
+
+}
+
+void HttpServer::handleSetBrightness() {
+  if (!HttpServer::isAuthenticated()) {
+    server.send(401, "text/plain", "Not authenticated.");
+    return;
+  }
+
+  int brightness = 0;
+  if (server.hasArg("brightness")) {
+    brightness = server.arg("brightness").toInt();
+  }
+
+  LedManager::setBrightness(brightness);
+
+  server.send(200, "text/plain", "Brightness set.");
+}
+
+void HttpServer::handleSetRGB()
+{
+  if (!HttpServer::isAuthenticated()) {
+    server.send(401, "text/plain", "Not authenticated.");
+    return;
+  }
+
+  int R = 0;
+  if (server.hasArg("R")) {
+    R = server.arg("R").toInt();
+  }
+
+  int G = 0;
+  if (server.hasArg("G")) {
+    G = server.arg("G").toInt();
+  }
+
+  int B = 0;
+  if (server.hasArg("B")) {
+    B = server.arg("B").toInt();
+  }
+
+  int startLED = 0;
+  if (server.hasArg("startLED")) {
+    startLED = server.arg("startLED").toInt();
+  }
+
+  int endLED = 0;
+  if (server.hasArg("endLED")) {
+    endLED = server.arg("endLED").toInt();
+  }
+
+  Serial.print(startLED);
+  Serial.print(endLED);
+
+  if (endLED > LED_NUM_LEDS) endLED = LED_NUM_LEDS;
+
+  for (int i = startLED; i < endLED; i++) {
+    LedManager::setRGB(R, G, B, i);
+    Serial.print("SET ");
+    Serial.println(i);
+  }
+
+  LedManager::display();
+
+  server.send(200, "text/plain", "RGB set.");
+}
+
 void HttpServer::handleCommand()
 {
+  String intention = "displayPayload"; //default is displayPayload
   String message = "__TODO__ Add useful info here";
 
-  Payload payload = generatePayload();
+  if (!HttpServer::isAuthenticated())
+  {
+    server.send(401, "text/plain", "AUTH ERROR");
+    return;
+  }
 
-  PayloadParser::parsePayload(payload);
+  if (server.hasArg("intention"))
+  {
+    intention = server.arg("intention");
+  }
+
+  Payload payload = HttpServer::generatePayload();
+
+  if (intention == "displayPayload")
+  {
+    PayloadParser::parsePayload(payload);
+  }
+  else if (intention == "resetPayloadBuffer")
+  {
+    memset(HttpServer::payloadBuffer, 0, sizeof(HttpServer::payloadBuffer));
+    HttpServer::payloadBufferPos = 0;
+  }
+  else if (intention == "addPayloadBuffer")
+  {
+    HttpServer::payloadBuffer[HttpServer::payloadBufferPos] = payload;
+    HttpServer::payloadBufferPos++;
+  }
+  else if (intention == "displayPayloadBuffer")
+  {
+    for (int i = 0; i < sizeof(HttpServer::payloadBufferPos); i++)
+    {
+      PayloadParser::parsePayload(HttpServer::payloadBuffer[i]);
+    }
+  }
 
   server.send(200, "text/plain", message);
+}
+
+boolean HttpServer::isAuthenticated()
+{
+  if (server.hasArg("authkey"))
+  {
+    if (server.arg("authkey") == AUTHKEY)
+    {
+      return true;
+    }
+  }
+
+  return false;
 }

@@ -27,6 +27,9 @@ void setup() {
   //Set up webserver
   HttpServer::setupWebServer();
 
+  //Set up led strip
+  LedManager::setupLeds();
+
   Serial.println("Setup Complete.");
 }
 
